@@ -55,24 +55,22 @@ def rlboy_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # 注意: RL_BOY 只有 ankle_pitch，没有 ankle_roll
   # 需要在 XML 中添加 foot site，或者使用现有的 ankle link
   # RL_BOY 机器人脚部 site 名称（已在 XML 的 ankle body 下添加 left_foot / right_foot）
-  SITE_NAMES = ("left_foot", "right_foot")
-
-# RL_BOY 脚部碰撞 geom 名称
-# 根据 XML 结构，脚部 geom 名称为 left_ankle_pitch_link 和 right_ankle_pitch_link
-  GEOM_NAMES = tuple(
-  f"{side}_ankle_pitch_link" for side in ("left", "right")
-)
+  site_names = ("left_foot", "right_foot")
+  foot_body_names = ("left_ankle_pitch_link", "right_ankle_pitch_link")
+  foot_geom_names = tuple(
+    f"{side}_foot{i}_collision" for side in ("left", "right") for i in range(1, 8)
+  )
   for sensor in cfg.scene.sensors or ():
     if sensor.name == "foot_height_scan":
       assert isinstance(sensor, TerrainHeightSensorCfg)
       sensor.frame = tuple(
-        ObjRef(type="body", name=s, entity="robot") for s in GEOM_NAMES
+        ObjRef(type="body", name=s, entity="robot") for s in foot_body_names
       )
       # 使用更小的 ring radius 因为 RL_BOY 的脚较小
       sensor.pattern = RingPatternCfg.single_ring(radius=0.02, num_samples=6)
 
   # 脚部接触传感器
-  # RL_BOY 使用 ankle_pitch_link 作为脚部
+  # RL_BOY 使用 foot geom 作为脚部
   feet_ground_cfg = ContactSensorCfg(
     name="feet_ground_contact",
     primary=ContactMatch(
@@ -124,7 +122,7 @@ def rlboy_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   # 事件配置 - 摩擦随机化
   # RL_BOY 脚部 geom 名称
-  cfg.events["foot_friction"].params["asset_cfg"].geom_names = GEOM_NAMES
+  cfg.events["foot_friction"].params["asset_cfg"].geom_names = foot_geom_names
   cfg.events["base_com"].params["asset_cfg"].body_names = ("base_link",)
 
   # 姿态奖励标准差配置
@@ -143,6 +141,8 @@ def rlboy_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     # 注意: RL_BOY 没有 ankle_roll 关节
     # 腰部关节
     r".*waist_yaw.*": 0.2,
+    # 头部关节（锁定，不主动运动）
+    r".*head_yaw.*": 0.05,
     # 手臂关节 
     r".*shoulder_pitch.*": 0.15,
     r".*shoulder_roll.*": 0.15,
@@ -158,6 +158,8 @@ def rlboy_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     r".*ankle_pitch.*": 0.35,
     # 腰部关节
     r".*waist_yaw.*": 0.3,
+    # 头部关节（锁定，不主动运动）
+    r".*head_yaw.*": 0.05,
     # 手臂关节 
     r".*shoulder_pitch.*": 0.5, 
     r".*shoulder_roll.*": 0.2,
@@ -173,7 +175,7 @@ def rlboy_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # 足部清洁和滑动奖励
   # 注意: RL_BOY 没有 ankle_roll，使用 ankle_pitch 作为脚部参考
   for reward_name in ["foot_clearance", "foot_slip"]:
-    cfg.rewards[reward_name].params["asset_cfg"].site_names = SITE_NAMES
+    cfg.rewards[reward_name].params["asset_cfg"].site_names = site_names
 
   # 奖励权重调整
   cfg.rewards["body_ang_vel"].weight = -0.05
@@ -218,7 +220,7 @@ def rlboy_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create RL Boy flat terrain velocity configuration."""
   cfg = rlboy_rough_env_cfg(play=play)
 
-  cfg.sim.njmax = 300
+  cfg.sim.njmax = 500
   cfg.sim.mujoco.ccd_iterations = 50
   cfg.sim.contact_sensor_maxmatch = 64
   cfg.sim.nconmax = None

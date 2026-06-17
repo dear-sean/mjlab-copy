@@ -301,7 +301,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     sim=SimulationCfg(
       nconmax=35,
-      njmax=250,
+      njmax=500,
       mujoco=MujocoCfg(
         timestep=0.005,
         iterations=10,

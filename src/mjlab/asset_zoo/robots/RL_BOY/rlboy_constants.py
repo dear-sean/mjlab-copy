@@ -7,15 +7,16 @@ import mujoco
 from mjlab import MJLAB_SRC_PATH
 from mjlab.actuator import BuiltinPositionActuatorCfg
 from mjlab.entity import EntityArticulationInfoCfg, EntityCfg
+from mjlab.utils.actuator import (
+  ElectricActuator,
+  reflected_inertia_from_two_stage_planetary,
+)
 from mjlab.utils.spec_config import CollisionCfg
 
 ##
 # MJCF and assets.
 ##
-
-RL_BOY_XML: Path = (
-  MJLAB_SRC_PATH / "asset_zoo" / "robots" / "RL_BOY" / "rlboy2.xml"
-)
+RL_BOY_XML: Path = MJLAB_SRC_PATH / "asset_zoo" / "robots" / "RL_BOY" / "RLBOY.xml"
 assert RL_BOY_XML.exists()
 
 
@@ -27,20 +28,83 @@ def get_spec() -> mujoco.MjSpec:
 # Actuator config.
 ##
 
-# 上半身手臂 PD 参数 (30kp, 2kd)
-STIFFNESS_ARM = 30.0
-DAMPING_ARM = 2.0
-EFFORT_LIMIT_ARM = 50  # TODO: 根据实际电机型号确定5050
+ROTOR_INERTIAS_J3507 = (
+  8.70e-6,
+  0.0,
+  0.0,
+)
+# Two-stage planetary placeholder: the first element is the input stage (1:1).
+# The built-in motor reducer is the second stage; the third stage is 1:1 here.
+GEARS_J3507 = (
+  1,
+  7,
+  1,
+)
+ARMATURE_J3507 = reflected_inertia_from_two_stage_planetary(
+  ROTOR_INERTIAS_J3507, GEARS_J3507
+)
 
-# 下半身腿部和腰部 PD 参数 (60kp, 3kd)
-STIFFNESS_LEG_WAIST = 60.0
-DAMPING_LEG_WAIST = 3.0
-EFFORT_LIMIT_LEG = 60  # TODO: 根据实际电机型号确定
-EFFORT_LIMIT_WAIST = 60 # TODO: 根据实际电机型号确定
+# 2. DM-J6006-2EC (中载，对标原 5020)
+ROTOR_INERTIAS_J6006 = (
+  5.80e-5,
+  0.0,
+  0.0,
+)
+GEARS_J6006 = (
+  1,
+  6,
+  1,
+)
+ARMATURE_J6006 = reflected_inertia_from_two_stage_planetary(
+  ROTOR_INERTIAS_J6006, GEARS_J6006
+)
 
-# 上半身手臂执行器配置 (使用 BuiltinPositionActuatorCfg 直接使用 XML motor 并设置 kp/kd)
-# 关节名称: left_shoulder_pitch, left_shoulder_roll, left_shoulder_yaw, left_elbow_pitch
-#           right_shoulder_pitch, right_shoulder_roll, right_shoulder_yaw, right_elbow_pitch
+# 3. DM-J8006-2EC V1.1 (重载，对标原 7520 系列)
+ROTOR_INERTIAS_J8006 = (
+  1.15e-4,
+  0.0,
+  0.0,
+)
+GEARS_J8006 = (
+  1,
+  6,
+  1,
+)
+ARMATURE_J8006 = reflected_inertia_from_two_stage_planetary(
+  ROTOR_INERTIAS_J8006, GEARS_J8006
+)
+
+ACTUATOR_J3507 = ElectricActuator(
+  reflected_inertia=ARMATURE_J3507,
+  velocity_limit=40,
+  effort_limit=3.0,
+)
+
+ACTUATOR_J6006 = ElectricActuator(
+  reflected_inertia=ARMATURE_J6006,
+  velocity_limit=23,
+  effort_limit=11.0,
+)
+
+ACTUATOR_J8006 = ElectricActuator(
+  reflected_inertia=ARMATURE_J8006,
+  velocity_limit=20,
+  effort_limit=20.0,
+)
+
+NATURAL_FREQ = 10 * 2.0 * 3.1415926535  # 10Hz 固有角频率,腿软时增大
+DAMPING_RATIO = 2.0
+
+# 刚度计算: K = J_ref * ω_n²
+STIFFNESS_J3507 = ARMATURE_J3507 * (NATURAL_FREQ**2)
+STIFFNESS_J6006 = ARMATURE_J6006 * (NATURAL_FREQ**2)
+STIFFNESS_J8006 = ARMATURE_J8006 * (NATURAL_FREQ**2)
+
+# 阻尼计算: D = 2*ζ*J_ref*ω_n
+DAMPING_J3507 = 2.0 * DAMPING_RATIO * ARMATURE_J3507 * NATURAL_FREQ
+DAMPING_J6006 = 2.0 * DAMPING_RATIO * ARMATURE_J6006 * NATURAL_FREQ
+DAMPING_J8006 = 2.0 * DAMPING_RATIO * ARMATURE_J8006 * NATURAL_FREQ
+
 RL_BOY_ACTUATOR_ARM = BuiltinPositionActuatorCfg(
   target_names_expr=(
     ".*_shoulder_pitch_joint",
@@ -48,37 +112,35 @@ RL_BOY_ACTUATOR_ARM = BuiltinPositionActuatorCfg(
     ".*_shoulder_yaw_joint",
     ".*_elbow_pitch_joint",
   ),
-  stiffness=STIFFNESS_ARM,
-  damping=DAMPING_ARM,
-  effort_limit=EFFORT_LIMIT_ARM,
+  stiffness=STIFFNESS_J3507,
+  damping=DAMPING_J3507,
+  effort_limit=ACTUATOR_J3507.effort_limit,
+  armature=ACTUATOR_J3507.reflected_inertia,
 )
-
-# 下半身腿部执行器配置
-# 关节名称: left_hip_yaw_joint, left_hip_roll_joint, left_hip_pitch_joint
-#           left_knee_pitch_joint, left_ankle_pitch_joint
-#           right_hip_yaw_joint, right_hip_roll_joint, right_hip_pitch_joint
-#           right_knee_pitch_joint, right_ankle_pitch_joint
 RL_BOY_ACTUATOR_LEG = BuiltinPositionActuatorCfg(
   target_names_expr=(
     ".*_hip_yaw_joint",
     ".*_hip_roll_joint",
     ".*_hip_pitch_joint",
     ".*_knee_pitch_joint",
-    ".*_ankle_pitch_joint",
   ),
-  stiffness=STIFFNESS_LEG_WAIST,
-  damping=DAMPING_LEG_WAIST,
-  effort_limit=EFFORT_LIMIT_LEG,
+  stiffness=STIFFNESS_J8006,
+  damping=DAMPING_J8006,
+  effort_limit=ACTUATOR_J8006.effort_limit,
+  armature=ACTUATOR_J8006.reflected_inertia,
 )
 
-# 腰部执行器配置
-RL_BOY_ACTUATOR_WAIST = BuiltinPositionActuatorCfg(
+# 腰部和脚部执行器配置
+RL_BOY_ACTUATOR_WAIST_FOOT = BuiltinPositionActuatorCfg(
   target_names_expr=(
     "waist_yaw_joint",
+    "head_yaw_joint",
+    ".*_ankle_pitch_joint",
   ),
-  stiffness=STIFFNESS_LEG_WAIST,
-  damping=DAMPING_LEG_WAIST,
-  effort_limit=EFFORT_LIMIT_WAIST,
+  stiffness=STIFFNESS_J6006,
+  damping=DAMPING_J6006,
+  effort_limit=ACTUATOR_J6006.effort_limit,
+  armature=ACTUATOR_J6006.reflected_inertia,
 )
 
 
@@ -87,24 +149,24 @@ RL_BOY_ACTUATOR_WAIST = BuiltinPositionActuatorCfg(
 ##
 
 HOME_KEYFRAME = EntityCfg.InitialStateCfg(
-  pos=(0, 0, 0.45),  # 根据 XML 中 base_link 的初始高度
+  pos=(0, 0, 0.41),  # 根据 XML 中 base_link 的初始高度
   joint_pos={
     # 腿部关节初始位置
-    "left_hip_pitch_joint": -0.1,
-    "left_knee_pitch_joint": 0.3,
-    "left_ankle_pitch_joint": 0.18,
+    "left_hip_pitch_joint": -0.2,
+    "left_knee_pitch_joint": 0.4,
+    "left_ankle_pitch_joint": -0.2,
     # 右腿
-    "right_hip_pitch_joint": 0.1,
-    "right_knee_pitch_joint": -0.3,
-    "right_ankle_pitch_joint": -0.18,
+    "right_hip_pitch_joint": -0.2,
+    "right_knee_pitch_joint": 0.4,
+    "right_ankle_pitch_joint": -0.2,
     # 其余所有腿部关节默认0（hip_yaw/hip_roll）
     ".*_hip_yaw_joint": 0,
-    ".*_hip_roll_joint": 0, 
+    ".*_hip_roll_joint": 0,
     # 手臂关节初始位置
-    ".*_shoulder_pitch_joint": 0,  # TODO: 根据实际机器人调整
-    ".*_elbow_pitch_joint": 0,  # TODO: 根据实际机器人调整
-    "left_shoulder_roll_joint": 1.3,  # TODO: 根据实际机器人调整
-    "right_shoulder_roll_joint": -1.3,  # TODO: 根据实际机器人调整
+    ".*_shoulder_pitch_joint": 0.15,
+    ".*_elbow_pitch_joint": 0.9,
+    "left_shoulder_roll_joint": 0.3,
+    "right_shoulder_roll_joint": -0.3,
   },
   joint_vel={".*": 0.0},
 )
@@ -114,32 +176,18 @@ HOME_KEYFRAME = EntityCfg.InitialStateCfg(
 # Collision config.
 ##
 
-# 碰撞配置需要根据实际 geom 名称确定
-# 从 XML 中可以看到碰撞相关的 geom，需要添加 _collision 后缀的 geom
-# 基于 RL_BOY.xml 的碰撞配置
+_foot_regex = "^(left|right)_foot[1-7]_collision$"
+
+# This enables all collisions.
+# Foot collisions are given custom condim, friction.
 FULL_COLLISION = CollisionCfg(
-    # 模型中碰撞 geom 无 _collision 后缀，直接匹配所有 mesh 类型的 geom（排除视觉辅助 geom）
-    geom_names_expr=(
-        r"^left_hip.*", r"^right_hip.*", r"^left_knee.*", r"^right_knee.*",
-        r"^left_ankle.*", r"^right_ankle.*", r"^base_link$", r"^waist_yaw_link$",
-        r"^left_shoulder.*", r"^right_shoulder.*", r"^left_elbow.*", r"^right_elbow.*",
-        r"^head_yaw_link$"
-    ),
-    # 碰撞维度：脚踝（脚部）设为 3，其他碰撞体设为 1
-    condim={
-        r".*_ankle_pitch_link": 3,  # 匹配左右脚踝 geom
-        r".*_collision": 1,         # 兼容通用碰撞体（兜底）
-        r".*_hip.*|.*_knee.*|.*_shoulder.*|.*_elbow.*|.*_waist.*|.*_base.*": 1
-    },
-    # 优先级：脚部（脚踝）设为最高优先级 1
-    priority={
-        r".*_ankle_pitch_link": 1
-    },
-    # 摩擦系数：脚踝（脚部）设为 0.6，匹配模型中默认摩擦系数（1.0 0.3 0.3）的主摩擦系数
-    friction={
-        r".*_ankle_pitch_link": (0.6,),  # 脚部主摩擦系数
-        r".*_hip.*|.*_knee.*": (1.0,)    # 腿部其他部位沿用模型默认摩擦系数
-    }
+  geom_names_expr=(".*_collision",),
+  # Harden all collision geoms.
+  solref=(0.01, 1),
+  # Configure feet colliders. Other colliders are frictionless (condim=1).
+  condim={_foot_regex: 6, ".*_collision": 1},
+  priority={_foot_regex: 1},
+  friction={_foot_regex: (1, 5e-3, 5e-4)},
 )
 
 ##
@@ -150,7 +198,7 @@ RL_BOY_ARTICULATION = EntityArticulationInfoCfg(
   actuators=(
     RL_BOY_ACTUATOR_ARM,
     RL_BOY_ACTUATOR_LEG,
-    RL_BOY_ACTUATOR_WAIST,
+    RL_BOY_ACTUATOR_WAIST_FOOT,
   ),
   soft_joint_pos_limit_factor=0.9,
 )
@@ -182,6 +230,10 @@ for a in RL_BOY_ARTICULATION.actuators:
   for n in names:
     RL_BOY_ACTION_SCALE[n] = 0.25 * e / s
 
+# Lock the head: the policy still outputs an action dimension for it, but the
+# target position is always the default position, so the head stays still.
+RL_BOY_ACTION_SCALE["head_yaw_joint"] = 0.0
+
 if __name__ == "__main__":
   import mujoco.viewer as viewer
 
@@ -190,4 +242,3 @@ if __name__ == "__main__":
   robot = Entity(get_rlboy_robot_cfg())
 
   viewer.launch(robot.spec.compile())
-
